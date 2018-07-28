@@ -63,6 +63,7 @@ class TwoLayerNet(object):
         - grads: Dictionary mapping parameter names to gradients of those parameters
           with respect to the loss function; has the same keys as self.params.
         """
+        
         # Unpack variables from the params dictionary
         W1, b1 = self.params['W1'], self.params['b1']
         W2, b2 = self.params['W2'], self.params['b2']
@@ -76,8 +77,13 @@ class TwoLayerNet(object):
         # shape (N, C).                                                             #
         #############################################################################
         
+        # Scores after the FC1
         scores_fc1 = np.dot(X, W1) + b1
+        
+        # Scores after FC1+ReLU
         scores_relu = np.maximum( 0, scores_fc1 )
+        
+        # Scores after FC1+ReLU+FC2
         scores_fc2 = np.dot(scores_relu, W2) + b2
         scores = scores_fc2
 
@@ -99,21 +105,19 @@ class TwoLayerNet(object):
         # classifier loss.                                                          #
         #############################################################################
         
+        # Normalize the scores so that the max value is 0
         scores_max = np.max(scores, axis=1)
         scores_norm = (scores.T - scores_max).T
         scores_exp = np.exp(scores_norm)
+        
+        # Find the total score for each image
         scores_sum = np.sum(scores_exp, axis=1)
         
-        scores_frac = ( scores_exp.T/scores_sum ).T
+        # Calculate the loss as SUM[ log(total sum) - correct_score ] for all imgs
         loss = np.sum( np.log(scores_sum) - scores_norm[np.arange(N), y] )
-
-        
-
-
-
+  
         # Change total loss,grad to average loss,grad per image
         loss /= N
-        
 
         # Add loss,grad due to regularization
         loss += reg * (np.sum(W1 * W1) + np.sum(W2 * W2))
@@ -135,40 +139,40 @@ class TwoLayerNet(object):
         # grads['W1'] should store the gradient on W1, and be a matrix of same size #
         #############################################################################
         
-        # partial of loss w.r.t output of fc2
-            # L = Softmax(fc2)
-        d_L_d_fc2 = scores_frac
-        d_L_d_fc2[np.arange(N), y] -= 1
-        d_L_d_fc2 /= N
+        # Find the fraction of a given score relative to total score of image
+        scores_frac = ( scores_exp.T/scores_sum ).T
         
-        # partial of output of fc2 w.r.t output of ReLU
-            # fc2 = ReLU( fc1 ) * W2 + b2
-        d_fc2_d_W2 = scores_relu
-        d_fc2_d_b2 = np.ones(b2.shape)
+        # L = softmax ( ( ReLU(X*W1 + b1) ) * W2 + b2 ) + reg * W2^2 + reg * W1^2
+        # L = softmax ( ReLU(fc1) * W2 + b2 )
+        # fc2 = ReLU(fc1) * W2 + b2
         
-        # partial of softmax w.r.t. ReLU (using chain rule)
-        grads['W2'] = np.dot(d_fc2_d_W2.T, d_L_d_fc2)
+        # dL/dW2 = dSoftmax(fc2) * ReLU(fc1) + 2*reg*W2
+        
+        # Finding gradient across Softmax node
+        dsoftmax = scores_frac
+        dsoftmax[np.arange(N), y] -= 1
+        dsoftmax /= N
+        
+        grads['W2'] = np.dot(scores_relu.T, dsoftmax)
         grads['W2'] += 2*reg*W2
-        grads['b2'] = np.sum(d_L_d_fc2, axis=0)
         
-        d_L_d_fc1 = np.dot(d_L_d_fc2, W2.T)
-        d_L_d_fc1[scores_relu < 0] = 0
+        # dL/db2 = dSoftmax(fc2)
         
-        grads['W1'] = np.dot(X.T, d_L_d_fc1)
+        grads['b2'] = np.sum(dsoftmax, axis=0)
         
-       
+        # dL/dW1 = dSoftmax(fc2) * W2 * dReLU(fc1) * X + 2*reg*W1
+        
+        dReLU = np.dot(dsoftmax, W2.T)
+        
+        dReLU[scores_relu <= 0] = 0
+        
+        grads['W1'] = np.dot(X.T, dReLU)
         grads['W1'] += 2*reg*W1
-        grads['b1'] = np.sum(d_L_d_fc1, axis=0)
         
-#         d_relu_d_fc1 = scores_fc1 > 0
-#         d_softmax_d_fc1 = d_softmax_d_relu * d_relu_d_fc1
+        # dL/db1 = dSoftmax(fc2) * W2 * dReLU(fc1)
         
-#         d_fc1_d_W1 = X
-#         d_softmax_d_W1 = np.dot(d_fc1_d_W1, d_softmax_d_fc1)
-        
-        
-#         grads['W2'] = np.dot( X.T, scores_frac)
-        
+        grads['b1'] = np.sum(dReLU, axis=0)
+                
         #############################################################################
         #                              END OF YOUR CODE                             #
         #############################################################################
@@ -196,6 +200,7 @@ class TwoLayerNet(object):
         - batch_size: Number of training examples to use per step.
         - verbose: boolean; if true print progress during optimization.
         """
+        
         num_train = X.shape[0]
         iterations_per_epoch = max(num_train / batch_size, 1)
 
@@ -208,11 +213,19 @@ class TwoLayerNet(object):
             X_batch = None
             y_batch = None
 
+            
             #########################################################################
             # TODO: Create a random minibatch of training data and labels, storing  #
             # them in X_batch and y_batch respectively.                             #
             #########################################################################
-            pass
+            
+            # Get a random list of images from the training set
+            indices = np.random.choice(np.arange(num_train), batch_size)
+            
+            # Grab the corresponding images and their labels
+            X_batch = X[indices, :]
+            y_batch = y[indices]
+            
             #########################################################################
             #                             END OF YOUR CODE                          #
             #########################################################################
@@ -227,7 +240,14 @@ class TwoLayerNet(object):
             # using stochastic gradient descent. You'll need to use the gradients   #
             # stored in the grads dictionary defined above.                         #
             #########################################################################
-            pass
+            
+            self.params['W2'] -= learning_rate*grads['W2'] 
+            self.params['W1'] -= learning_rate*grads['W1'] 
+            self.params['b2'] -= learning_rate*grads['b2'] 
+            self.params['b1'] -= learning_rate*grads['b1'] 
+            
+            
+            
             #########################################################################
             #                             END OF YOUR CODE                          #
             #########################################################################
@@ -272,7 +292,14 @@ class TwoLayerNet(object):
         ###########################################################################
         # TODO: Implement this function; it should be VERY simple!                #
         ###########################################################################
-        pass
+        
+        # Calculate the forward pass
+        fc1 = np.dot( X, self.params['W1'] ) + self.params['b1']
+        fc2 = np.dot( np.maximum( 0, fc1 ), self.params['W2'] ) + self.params['b2']
+                
+        # Grab the index of the highest value in each image in X
+        y_pred = np.argmax(fc2, axis=1)
+        
         ###########################################################################
         #                              END OF YOUR CODE                           #
         ###########################################################################
