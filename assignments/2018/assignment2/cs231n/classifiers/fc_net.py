@@ -189,19 +189,33 @@ class FullyConnectedNet(object):
         # concatenate the size of all layers into one array
         dims = np.hstack( (input_dim, hidden_dims, num_classes) )
         
+        
+#         print(f"input dim: {input_dim}")
+#         print(f"hidden_dims: {hidden_dims}")
+#         print(f"num_classes: {num_classes}")
+#         print(f"layers: {self.num_layers}")
+        
+        
+        
         # iterate through all layers except last        
         for index, this_dim in enumerate(dims[:-1]):
             
+#             print(f"index: {index}, this_dim: {this_dim}")
+            
             # generate the name of the param for current layer to next layer
-            weight_name = "W" + str(index+1) 
-            bias_name = "b" + str(index+1)
+            W = "W" + str(index+1) 
+            b = "b" + str(index+1)
+            
+#             print(f"weight: {W}, bias: {b}")
             
             # size of the weight matrix is size=(this_dim, next_dim)
-            self.params[weight_name] = weight_scale * np.random.randn(this_dim, dims(index+1))
+            self.params[W] = weight_scale * np.random.randn(this_dim, dims[index+1])
             
             # The bias vector is the size of next_dim
-            self.params[bias_name] = np.zeros(dims(index+1))
-            
+            self.params[b] = np.zeros(dims[index+1])
+        
+#         print('Done Init\n\n')
+        
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
@@ -264,15 +278,23 @@ class FullyConnectedNet(object):
         # Create a cache dictionary
         cache = {}
         
+        layer_out = X
+        
         for layer in range(self.num_layers-1):
+            
+#             print(f'layer: {layer}')
             
             W = self.params["W" + str(layer+1)]
             b = self.params["b" + str(layer+1)]
-            layer_out, cache[layer+1] = affine_relu_forward(layer_out, W, B) 
+            
+            layer_out, cache[layer+1] = affine_relu_forward(layer_out, W, b) 
         
         W = self.params["W" + str(self.num_layers)]
         b = self.params["b" + str(self.num_layers)]
-        scores, cache[self.num_layers] = affine_forward(layer_out, W, B)
+        
+        scores, cache[self.num_layers] = affine_forward(layer_out, W, b)
+        
+#         print('Done Forward\n\n')
         
         ############################################################################
         #                             END OF YOUR CODE                             #
@@ -300,29 +322,47 @@ class FullyConnectedNet(object):
         # calculate the softmax loss and gradient
         loss, grad_softmax = softmax_loss(scores, y)
         
-        # add the regularization loss
-        loss += 0.5 * self.reg * ( np.sum(self.params["W1"]**2) + np.sum(self.params["W2"]**2) )
-        
-        grad_fc2, grads["W2"], grads["b2"] = affine_backward(grad_softmax, cache_fc2)
-        grad_fc1, grads["W1"], grads["b1"] = affine_relu_backward(grad_fc2, cache_fc1)
-        
-        grads["W2"] += self.reg * self.params["W2"]
-        grads["W1"] += self.reg * self.params["W1"]        
         
         
-        W = self.params["W" + str(self.num_layers)]
-        b = self.params["b" + str(self.num_layers)]
+        # Get the W and b of the last layer
+        W = "W" + str(self.num_layers)
+        b = "b" + str(self.num_layers)
+        
+        
+#         print(f"weight: {W}, bias: {b}")
+        
+        # Get the grads for the last layer (fully connected without ReLU)
         grad_out, grads[W], grads[b] = affine_backward(grad_softmax, cache[self.num_layers])
         
-        for layer in range(self.num_layers-1):
+        # add the reg loss to the W grad
+        grads[W] += self.reg * self.params[W]
+        
+        # add the regularization loss
+        loss += 0.5 * self.reg * ( np.sum(self.params[W]**2))
+        
+        # Iterate through the rest of the layers, backwards
+        for layer in range(self.num_layers-1, 0, -1):
             
-            W = self.params["W" + str(layer+1)]
-            b = self.params["b" + str(layer+1)]
-            layer_out, cache[layer+1] = affine_relu_forward(layer_out, W, B) 
+#             print(f"layer: {layer}")
         
+            
+            # Get the W and b of this layer
+            W = "W" + str(layer)
+            b = "b" + str(layer)
+            
+#             print(f"weight: {W}, bias: {b}")
+            
+            # Get the grads for this layer
+            grad_out, grads[W], grads[b] = affine_relu_backward(grad_out, cache[layer])
+            
+            # add the reg loss to the W grad
+            grads[W] += self.reg * self.params[W]
         
+            # add the regularization loss
+            loss += 0.5 * self.reg * ( np.sum(self.params[W]**2))
+      
         
-        
+#         print(f'Done Backward\n\n')
         
         ############################################################################
         #                             END OF YOUR CODE                             #

@@ -65,7 +65,11 @@ def sgd_momentum(w, dw, config=None):
     # TODO: Implement the momentum update formula. Store the updated value in #
     # the next_w variable. You should also use and update the velocity v.     #
     ###########################################################################
-    pass
+    
+    v = config['momentum']*v - config['learning_rate']*dw
+    next_w = w + v
+    
+    
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -99,7 +103,23 @@ def rmsprop(w, dw, config=None):
     # in the next_w variable. Don't forget to update cache value stored in    #
     # config['cache'].                                                        #
     ###########################################################################
-    pass
+    
+    # cache is a moving average of squares of gradients
+    # every iter, decay cache by x and add (1-x) * dw**2 
+    
+    # decay the current cache and add a weighted, element-wise, sq of dw
+    cache = config['cache']*config['decay_rate'] + (1 - config['decay_rate']) * dw**2 
+    
+    # next_w is w - learn_rate * dw element_wise divided by sqrt of cache
+    # a small epsilon is added to avoid divide by 0
+    # This boosts small gradients (dividing by small cache) and reduces large ones
+    # thus acting like a 'normalizer' for learning rate
+    
+    next_w = w - config['learning_rate'] * dw / (np.sqrt(cache) + config['epsilon'])
+    
+    # store the new cache in config
+    config['cache'] = cache
+    
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -139,7 +159,35 @@ def adam(w, dw, config=None):
     # NOTE: In order to match the reference output, please modify t _before_  #
     # using it in any calculations.                                           #
     ###########################################################################
-    pass
+    
+    # Update the iteration number
+    t = config['t'] + 1
+    
+    # m is running average of dw - this is like the momentum (like SGD momentum) 
+    # decay current m by beta1 and add (1-beta1) of dw
+    m = config['beta1']*config['m'] + (1-config['beta1'])*dw
+    
+    # mt is a slightly boosted m when t is low
+    # as t -> inf, mt -> m
+    mt = m / (1-config['beta1']**t)
+    
+    # v is running average of dw**2 - this is for normalization (like RMSprop)
+    # decay current v by beta2 add (1-beta2) of dw**2 
+    v = config['beta2']*config['v'] + (1-config['beta2'])*(dw**2)
+    
+    vt = v / (1-config['beta2']**t)
+    
+    # next w should move from w by learning_rate in direction of momemtum m
+    # the learning rate is normalized by dividing by sqrt(v)
+    # a small epsilon is added to avoid dividing by 0
+    next_w = w - config['learning_rate'] * mt / (np.sqrt(vt) + config['epsilon'])
+    
+    # Store the new m, v and t
+    config['m'] = m
+    config['v'] = v
+    config['t'] = t
+    
+    
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
