@@ -199,21 +199,56 @@ def batchnorm_forward(x, gamma, beta, bn_param):
         # Referencing the original paper (https://arxiv.org/abs/1502.03167)   #
         # might prove to be helpful.                                          #
         #######################################################################
-        pass
+        
+        x_sum = np.sum(x, axis=0)
+        x_mean = x_sum/N
+        
+        x_err      = x - x_mean
+        x_sq_err   = x_err**2
+        x_sq_sum   = np.sum(x_sq_err,axis=0)
+        x_var      = x_sq_sum/N + eps
+        x_std      = np.sqrt(x_var)
+        x_inv_std  = 1./x_std
+        
+        x_norm     = x_err * x_inv_std
+        out = gamma * x_norm + beta
+        
+        
+#         mean = np.mean(x,axis=0)
+#         var = np.var(x,axis=0)
+        
+#         x_norm = ( x - mean ) / (np.sqrt(var + eps))
+        
+#         out = x_norm * gamma + beta
+        
+        running_mean = momentum*running_mean + (1.0-momentum)*x_mean
+        running_var = momentum*running_var + (1.0-momentum)*x_var
+        
+        cache = (x_sum,x_mean,x_err,x_sq_err,x_sq_sum,x_var,x_std,x_inv_std,out,x_norm,x,gamma,beta)
+        
         #######################################################################
         #                           END OF YOUR CODE                          #
         #######################################################################
+        
     elif mode == 'test':
+        
         #######################################################################
         # TODO: Implement the test-time forward pass for batch normalization. #
         # Use the running mean and variance to normalize the incoming data,   #
         # then scale and shift the normalized data using gamma and beta.      #
         # Store the result in the out variable.                               #
         #######################################################################
-        pass
+        
+        # Normalize the input with the running statistics
+        x_norm = ( x - running_mean ) / (np.sqrt(running_var + eps))
+        
+        # Add the learned scale and shift params
+        out = x_norm * gamma + beta
+
         #######################################################################
         #                          END OF YOUR CODE                           #
         #######################################################################
+        
     else:
         raise ValueError('Invalid forward batchnorm mode "%s"' % mode)
 
@@ -248,7 +283,72 @@ def batchnorm_backward(dout, cache):
     # Referencing the original paper (https://arxiv.org/abs/1502.03167)       #
     # might prove to be helpful.                                              #
     ###########################################################################
-    pass
+    
+    N, D = dout.shape
+    
+    x_sum,x_mean,x_err,x_sq_err,x_sq_sum,x_var,x_std,x_inv_std,out,x_norm,x,gamma,beta = cache
+    
+    dx_norm      = dout         * gamma
+    print(x_inv_std.shape, dx_norm.shape)
+    dx_err_2     = np.sum( dx_norm * x_inv_std , axis=0) * np.ones(x.shape)
+    dx_inv_std   = np.sum( dx_norm * x_err , axis=0) 
+    
+    print(dx_inv_std.shape, dx_err_2.shape)
+    
+    dx_std       = dx_inv_std   * -1 * x_std**-2
+    dx_var       = dx_std       * 0.5 * x_var**-0.5
+    print(dx_var.shape)
+    
+    dx_sq_sum    = dx_var       * (1/N) * np.ones(x.shape)
+    print(dx_sq_sum.shape)
+    dx_sq_err    = dx_sq_sum                     #np.sum(dx_sq_sum, axis=0) * np.ones(dout.shape)
+    dx_err_1     = dx_sq_err    * -2 * x_err
+    
+    dx_err = dx_err_1 + dx_err_2
+    
+    dx_mean      = dx_err     * -1
+    dx_sum       = dx_mean      * (1./N)
+    
+    dx1          = dx_sum 
+    
+    
+    dx2 = dx_err
+    
+    dx = dx1 + dx2
+    
+    dgamma = np.sum(dout*x_norm, axis=0) * np.ones_like(gamma)
+    dbeta = np.sum(dout,axis=0) 
+    
+    
+    
+#     std = np.sqrt(var)
+#     inv_std = 1./std
+    
+#     dx_norm      = dout         * gamma
+#     derr         = dx_norm      * inv_std
+#     dx1          = derr       # * 1
+    
+#     err = x-mean
+    
+#     dinv_std     = dx_norm      * err
+#     dstd         = dinv_std     * -1 * std**(-2)
+#     dvar         = dstd         * 0.5 * var**(-0.5)
+#     dsq_err      = dvar         * np.sum(var, axis=0) / N *np.ones_like(dout)
+#     derr2        = dsq_err      * 2 * err
+#     dx3          = derr2      # * 1
+    
+#     dmean1 = -derr
+#     dmean2 = -derr2
+#     dmean = dmean1 + dmean2
+#     dsum = dmean/N
+    
+#     dx2 = np.sum(dsum, axis=0)*np.ones_like(dout)
+    
+#     print(dx1.shape, dx2.shape, dx3.shape)
+    
+#     dx = dx1 + dx2 + dx3
+    
+    
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
