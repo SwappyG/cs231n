@@ -200,30 +200,33 @@ def batchnorm_forward(x, gamma, beta, bn_param):
         # might prove to be helpful.                                          #
         #######################################################################
         
+        # sum value of each feature for all images and divide by num images for avg
         x_sum = np.sum(x, axis=0)
         x_mean = x_sum/N
         
+        # find the squared error for each feature in each image
         x_err      = x - x_mean
         x_sq_err   = x_err**2
+        
+        # sum the squared errors for each feature for all images to find variance
         x_sq_sum   = np.sum(x_sq_err,axis=0)
         x_var      = x_sq_sum/N + eps
+        
+        # Find standard deviation and the reciprocal of standard deviation
         x_std      = np.sqrt(x_var)
         x_inv_std  = 1./x_std
         
+        # subtract mean from each feature in each image and divide by std dev to normalize
         x_norm     = x_err * x_inv_std
+        
+        # multiply by the scale parameter and add the shift parameter to each feature
         out = gamma * x_norm + beta
         
-        
-#         mean = np.mean(x,axis=0)
-#         var = np.var(x,axis=0)
-        
-#         x_norm = ( x - mean ) / (np.sqrt(var + eps))
-        
-#         out = x_norm * gamma + beta
-        
+        # Keep an exponentially decaying running mean and var based on momentum param
         running_mean = momentum*running_mean + (1.0-momentum)*x_mean
         running_var = momentum*running_var + (1.0-momentum)*x_var
         
+        # Store all the important stuff in a cache for backward pass
         cache = (x_sum,x_mean,x_err,x_sq_err,x_sq_sum,x_var,x_std,x_inv_std,out,x_norm,x,gamma,beta)
         
         #######################################################################
@@ -288,67 +291,33 @@ def batchnorm_backward(dout, cache):
     
     x_sum,x_mean,x_err,x_sq_err,x_sq_sum,x_var,x_std,x_inv_std,out,x_norm,x,gamma,beta = cache
     
+    # Backprop across scaling
     dx_norm      = dout         * gamma
-    print(x_inv_std.shape, dx_norm.shape)
-    dx_err_2     = np.sum( dx_norm * x_inv_std , axis=0) * np.ones(x.shape)
-    dx_inv_std   = np.sum( dx_norm * x_err , axis=0) 
     
-    print(dx_inv_std.shape, dx_err_2.shape)
-    
+    # Backprop multiplication of error and reciprocal of std dev
+    dx_err_2     = dx_norm * x_inv_std
+    dx_inv_std   = np.sum( dx_norm * x_err , axis=0) #sum since std dev per feature is multiplied for every image
+  
+    # Backprop through variance and std dev calculation
     dx_std       = dx_inv_std   * -1 * x_std**-2
     dx_var       = dx_std       * 0.5 * x_var**-0.5
-    print(dx_var.shape)
+    dx_sq_err    = dx_var       * (1/N) * np.ones(x.shape) #reshape due to summation in forward pass
+    dx_err_1     = dx_sq_err    * 2 * x_err
     
-    dx_sq_sum    = dx_var       * (1/N) * np.ones(x.shape)
-    print(dx_sq_sum.shape)
-    dx_sq_err    = dx_sq_sum                     #np.sum(dx_sq_sum, axis=0) * np.ones(dout.shape)
-    dx_err_1     = dx_sq_err    * -2 * x_err
-    
+    # Sum the two branches of the error
     dx_err = dx_err_1 + dx_err_2
     
-    dx_mean      = dx_err     * -1
-    dx_sum       = dx_mean      * (1./N)
+    # Backprop through the mean calculations
+    dx_mean      = np.sum(dx_err, axis=0) # sum since mean per feature is subtracted for every image    
+    dx_sum       = (-1./N)*dx_mean*np.ones(x.shape) # Reshape due to summation     
     
-    dx1          = dx_sum 
+    # Sum the two branches for x
+    dx = dx_err + dx_sum
     
-    
-    dx2 = dx_err
-    
-    dx = dx1 + dx2
-    
+    # Backprop for gamma and beta
     dgamma = np.sum(dout*x_norm, axis=0) * np.ones_like(gamma)
     dbeta = np.sum(dout,axis=0) 
-    
-    
-    
-#     std = np.sqrt(var)
-#     inv_std = 1./std
-    
-#     dx_norm      = dout         * gamma
-#     derr         = dx_norm      * inv_std
-#     dx1          = derr       # * 1
-    
-#     err = x-mean
-    
-#     dinv_std     = dx_norm      * err
-#     dstd         = dinv_std     * -1 * std**(-2)
-#     dvar         = dstd         * 0.5 * var**(-0.5)
-#     dsq_err      = dvar         * np.sum(var, axis=0) / N *np.ones_like(dout)
-#     derr2        = dsq_err      * 2 * err
-#     dx3          = derr2      # * 1
-    
-#     dmean1 = -derr
-#     dmean2 = -derr2
-#     dmean = dmean1 + dmean2
-#     dsum = dmean/N
-    
-#     dx2 = np.sum(dsum, axis=0)*np.ones_like(dout)
-    
-#     print(dx1.shape, dx2.shape, dx3.shape)
-    
-#     dx = dx1 + dx2 + dx3
-    
-    
+       
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -379,7 +348,16 @@ def batchnorm_backward_alt(dout, cache):
     # should be able to compute gradients with respect to the inputs in a     #
     # single statement; our implementation fits on a single 80-character line.#
     ###########################################################################
-    pass
+    
+    N, D = dout.shape
+    
+    x_sum,x_mean,x_err,x_sq_err,x_sq_sum,x_var,x_std,x_inv_std,out,x_norm,x,gamma,beta = cache
+    
+    dx = gamma*x_inv_std*(1/N) * ( (N*dout) - np.sum(dout,axis=0) - (x_err)*(x_inv_std**2*np.sum(dout*x_err, axis=0)))
+     
+    dgamma = np.sum(dout*x_norm, axis=0) * np.ones_like(gamma)
+    dbeta = np.sum(dout,axis=0)
+    
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -421,7 +399,38 @@ def layernorm_forward(x, gamma, beta, ln_param):
     # transformations you could perform, that would enable you to copy over   #
     # the batch norm code and leave it almost unchanged?                      #
     ###########################################################################
-    pass
+    
+    N, D = x.shape
+    
+    # sum value of each pixel in each image and divide by num pixels for avg
+    # to do this, transpose x to sum in the right direction
+    x_sum = np.sum(x.T, axis=0)
+    x_mean = x_sum/D
+
+    # find the squared error for each pixel in each image, for all images
+    x_err      = x.T - x_mean
+    x_sq_err   = x_err**2
+
+    # sum the squared errors for each pixel in each images to find variance
+    x_sq_sum   = np.sum(x_sq_err,axis=0)
+    x_var      = x_sq_sum/D + eps
+
+    # Find standard deviation and the reciprocal of standard deviation
+    x_std      = np.sqrt(x_var)
+    x_inv_std  = 1./x_std
+
+    # subtract mean from each pixel in each image and divide by std dev to all images
+    x_norm     = x_err * x_inv_std
+
+    # multiply by the scale parameter and add the shift parameter to each feature
+    # x_norm needs to be transformed back so each image is a row again instead of column
+    out = gamma * x_norm.T + beta
+
+    # Store all the important stuff in a cache for backward pass
+    cache = (x_sum,x_mean,x_err,x_sq_err,x_sq_sum,x_var,x_std,x_inv_std,out,x_norm,x,gamma,beta)
+    
+
+
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -452,7 +461,44 @@ def layernorm_backward(dout, cache):
     # implementation of batch normalization. The hints to the forward pass    #
     # still apply!                                                            #
     ###########################################################################
-    pass
+    
+    N, D = dout.shape
+    
+    x_sum,x_mean,x_err,x_sq_err,x_sq_sum,x_var,x_std,x_inv_std,out,x_norm,x,gamma,beta = cache
+    
+    # Backprop across scaling
+    # since its normalization per image, and not per feature, transpose dx_norm
+    dx_norm      = (dout         * gamma).T
+    
+    # Backprop multiplication of error and reciprocal of std dev
+    dx_err_2     = dx_norm * x_inv_std
+    dx_inv_std   = np.sum( dx_norm * x_err , axis=0) #sum since std dev per feature is multiplied for every image
+  
+    # Backprop through variance and std dev calculation
+    # x needs to be transposed since its per image normalization, not per feature
+    dx_std       = dx_inv_std   * -1 * x_std**-2
+    dx_var       = dx_std       * 0.5 * x_var**-0.5
+    dx_sq_err    = dx_var       * (1/D) * np.ones(x.T.shape) #reshape due to summation in forward pass
+    dx_err_1     = dx_sq_err    * 2 * x_err
+    
+    # Sum the two branches of the error
+    dx_err = dx_err_1 + dx_err_2
+    
+    # Backprop through the mean calculations
+    # x needs to be transposed since its per image normalization, not per feature
+    dx_mean      = np.sum(dx_err, axis=0) # sum since mean per feature is subtracted for every image    
+    dx_sum       = (-1./D)*dx_mean*np.ones(x.T.shape) # Reshape due to summation     
+    
+    # Sum the two branches for x
+    # transpose dx to return it such that each row is a new image, and each column is same pixel across images
+    dx = (dx_err + dx_sum).T
+    
+    # Backprop for gamma and beta
+    dgamma = np.sum(dout*x_norm.T, axis=0) * np.ones_like(gamma)
+    dbeta = np.sum(dout,axis=0)
+    
+    
+    
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -497,7 +543,10 @@ def dropout_forward(x, dropout_param):
         # TODO: Implement training phase forward pass for inverted dropout.   #
         # Store the dropout mask in the mask variable.                        #
         #######################################################################
-        pass
+        
+        mask = np.random.choice([0,1], size=x.shape, p=[(1-p),p])
+        out = np.multiply(x, mask)/p
+        
         #######################################################################
         #                           END OF YOUR CODE                          #
         #######################################################################
@@ -505,7 +554,7 @@ def dropout_forward(x, dropout_param):
         #######################################################################
         # TODO: Implement the test phase forward pass for inverted dropout.   #
         #######################################################################
-        pass
+        out = x
         #######################################################################
         #                            END OF YOUR CODE                         #
         #######################################################################
@@ -532,7 +581,9 @@ def dropout_backward(dout, cache):
         #######################################################################
         # TODO: Implement training phase backward pass for inverted dropout   #
         #######################################################################
-        pass
+        
+        dx = np.multiply(dout, mask) / dropout_param['p']
+        
         #######################################################################
         #                          END OF YOUR CODE                           #
         #######################################################################
@@ -574,7 +625,37 @@ def conv_forward_naive(x, w, b, conv_param):
     # TODO: Implement the convolutional forward pass.                         #
     # Hint: you can use the function np.pad for padding.                      #
     ###########################################################################
-    pass
+    
+    N, C, H, W = x.shape
+    F, C, HH, WW = w.shape
+    pad = conv_param['pad']
+    stride = conv_param['stride']
+    
+    # pad the input along only the H and W dimensions
+    x_pad = np.pad(x, ((0,0),(0,0),(pad,pad),(pad,pad)), 'constant', constant_values=0)
+    
+    # Calculate the output H and W based on padding and stride
+    H_prime = np.int(1 + (H + 2 * pad - HH) / stride)
+    W_prime = np.int(1 + (H + 2 * pad - HH) / stride)
+    
+    # initialize the output tensor
+    out = np.zeros([N, F, H_prime, W_prime])
+   
+    # Iterate through all images
+    for image in range(0, N):
+        # Iterate through all filters
+        for filt in range(0, F):
+            # Iterate through each row of pixel
+            for horz in range(0, H_prime):
+                # Iterate through each column of pixel
+                for vert in range(0, W_prime):
+                    # Grab this filter of size (C, HH, WW)
+                    kernel = w[filt,:,:,:]
+                    # Grab the sub image of same size as filter
+                    sub_image = x_pad[image,:,horz*stride:horz*stride+HH,vert*stride:vert*stride+WW]
+                    # Perform convolution (multiply element-wise and sum all products)
+                    out[image,filt,horz,vert] = np.sum( kernel * sub_image ) + b[filt]
+                            
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -599,7 +680,57 @@ def conv_backward_naive(dout, cache):
     ###########################################################################
     # TODO: Implement the convolutional backward pass.                        #
     ###########################################################################
-    pass
+    
+    x, w, b, conv_param = cache
+    
+    N, C, H, W = x.shape
+    F, C, HH, WW = w.shape
+    
+    pad = conv_param['pad']
+    stride = conv_param['stride']
+    
+    # Calculate the output H and W based on padding and stride
+    H_prime = np.int(1 + (H + 2 * pad - HH) / stride)
+    W_prime = np.int(1 + (H + 2 * pad - HH) / stride)
+    
+    x_pad = np.pad(x, ((0,0),(0,0),(pad,pad),(pad,pad)), 'constant', constant_values=0)
+    
+    dx_pad = np.zeros_like(x_pad)
+    print(dx_pad.shape)
+    dx = np.zeros_like(x)
+    dw = np.zeros_like(w)
+    db = np.zeros_like(b)
+    
+    # Iterate through all images
+    for image in range(0, N):
+        # Iterate through all filters
+        for filt in range(0, F):
+            # Iterate through each row of pixel
+            for horz in range(0, H_prime):
+                # Iterate through each column of pixel
+                for vert in range(0, W_prime):
+                    
+                    # For every pixel, sub_image is multiplies by kernel
+                    # Thus, during backward pass, gradient for sub image is simply the kernel (multiplied by upstream grad)
+                    # This adds to any existing gradient acquired by kernels for previous pixels 
+                    dx_pad[image,:,horz*stride:horz*stride+HH,vert*stride:vert*stride+WW] += \
+                        dout[image, filt, horz, vert] * w[filt, :, :, :]
+                    
+                    # As above, output is produced by product of sub image and kernel
+                    # Thus, during backward pass, gradient for kernel is the sub image
+                    # Again, add this for every sub image that uses the same kernel
+                    dw[filt,:,:,:] += \
+                        dout[image, filt, horz, vert] * x_pad[image,:,horz*stride:horz*stride+HH,vert*stride:vert*stride+WW]
+                    
+                    # For every kernel, the is just added to the output
+                    # Thus, during the backward pass, the gradient is just 1 (multiplied by upstream grad)
+                    # Sum this for all pixels, since they all use the same bias
+                    db[filt] += dout[image, filt, horz, vert]
+    
+    # We found the gradient for the padded images, trim the padding to get grad for only the images
+    dx = dx_pad[:,:,pad:-pad,pad:-pad]
+    
+    
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -629,7 +760,29 @@ def max_pool_forward_naive(x, pool_param):
     ###########################################################################
     # TODO: Implement the max-pooling forward pass                            #
     ###########################################################################
-    pass
+    
+    N, C, H, W = x.shape
+    
+    pool_h = pool_param['pool_height']
+    pool_w = pool_param['pool_width']
+    stride = pool_param['stride']
+    
+    H_prime = np.int(1 + (H - pool_h) / stride)
+    W_prime = np.int(1 + (W - pool_w) / stride)
+    out = np.zeros([N, C, H_prime, W_prime])
+    
+    # Iterate through all images
+    for image in range(0, N):
+        # Iterate through each row of pixel
+        for horz in range(0, H_prime):
+            # Iterate through each column of pixel
+            for vert in range(0, W_prime):
+                # Grab the sub image of same size as filter
+                sub_image = x[image,:,horz*stride:horz*stride+stride,vert*stride:vert*stride+stride]
+                # find the maximum value of the sub image, and store it as the output
+                out[image,:,horz,vert] = np.amax(sub_image, axis=(1,2))
+    
+    
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -652,7 +805,38 @@ def max_pool_backward_naive(dout, cache):
     ###########################################################################
     # TODO: Implement the max-pooling backward pass                           #
     ###########################################################################
-    pass
+    
+    x, pool_param = cache
+    N,C,H,W = x.shape
+    
+    pool_h = pool_param['pool_height']
+    pool_w = pool_param['pool_width']
+    stride = pool_param['stride']
+    
+    H_prime = np.int(1 + (H - pool_h) / stride)
+    W_prime = np.int(1 + (W - pool_w) / stride)
+    dx = np.zeros_like(x)
+    
+    # Iterate through all images
+    for image in range(0, N):
+        # Iterate through each row of pixel
+        for horz in range(0, H_prime):
+            # Iterate through each column of pixel
+            for vert in range(0, W_prime):
+                
+                for chan in range(C):
+                    # Grab the sub image of that was pooled for this (horz,vert)
+                    sub_image = x[image,chan,horz*stride:horz*stride+stride,vert*stride:vert*stride+stride]
+                    
+                    # Find the location in sub image that contains the max value
+                    pool_mask = (sub_image == np.amax(sub_image))
+                    
+                    # Multiply the mask by the upstream grad, since only that value is allowed through in max pool
+                    # The rest of the grads are all 0
+                    dx[image,chan,horz*stride:horz*stride+stride,vert*stride:vert*stride+stride] = \
+                        pool_mask * dout[image,chan,horz,vert]
+                
+    
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################

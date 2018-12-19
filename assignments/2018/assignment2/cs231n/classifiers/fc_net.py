@@ -188,34 +188,28 @@ class FullyConnectedNet(object):
         
         # concatenate the size of all layers into one array
         dims = np.hstack( (input_dim, hidden_dims, num_classes) )
-        
-        
-#         print(f"input dim: {input_dim}")
-#         print(f"hidden_dims: {hidden_dims}")
-#         print(f"num_classes: {num_classes}")
-#         print(f"layers: {self.num_layers}")
-        
-        
-        
+            
         # iterate through all layers except last        
         for index, this_dim in enumerate(dims[:-1]):
-            
-#             print(f"index: {index}, this_dim: {this_dim}")
-            
+           
             # generate the name of the param for current layer to next layer
             W = "W" + str(index+1) 
             b = "b" + str(index+1)
-            
-#             print(f"weight: {W}, bias: {b}")
-            
+                     
             # size of the weight matrix is size=(this_dim, next_dim)
             self.params[W] = weight_scale * np.random.randn(this_dim, dims[index+1])
             
             # The bias vector is the size of next_dim
             self.params[b] = np.zeros(dims[index+1])
-        
-#         print('Done Init\n\n')
-        
+            
+            if (self.normalization == 'batchnorm'):
+                if index < dims.shape[0] - 2:
+                    gamma = "gamma" + str(index+1)
+                    beta = "beta" + str(index+1)
+
+                    self.params[gamma] = np.ones(dims[index+1])
+                    self.params[beta] = np.zeros(dims[index+1])
+         
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
@@ -243,7 +237,7 @@ class FullyConnectedNet(object):
         # Cast all parameters to the correct datatype
         for k, v in self.params.items():
             self.params[k] = v.astype(dtype)
-
+        
 
     def loss(self, X, y=None):
         """
@@ -277,25 +271,43 @@ class FullyConnectedNet(object):
         
         # Create a cache dictionary
         cache = {}
-        
+        mask = {}
         layer_out = X
         
+        # Go through each layer in the network
         for layer in range(self.num_layers-1):
             
-#             print(f'layer: {layer}')
-            
+            # Grab the weights of this layer
             W = self.params["W" + str(layer+1)]
             b = self.params["b" + str(layer+1)]
             
-            layer_out, cache[layer+1] = affine_relu_forward(layer_out, W, b) 
+            # if using batchnorm
+            if self.normalization=='batchnorm':
+                # Grab the batchnorm params for this layer
+                gamma = self.params["gamma" + str(layer+1)]
+                beta = self.params["beta" + str(layer+1)]
+                bn_params = self.bn_params[layer]
+                
+                # Take an affine->batchnorm->ReLU forward step
+                layer_out, cache[layer+1] = affine_bn_relu_forward(layer_out, W, b, gamma, beta, bn_params)
+                
+            # if not using batchnorm
+            else:
+                # Take an affine-ReLU forward step
+                layer_out, cache[layer+1] = affine_relu_forward(layer_out, W, b) 
+            
+            # if using dropout
+            if self.use_dropout:
+                # Take a dropout forward step and append mask to this layer's cache
+                layer_out, mask[layer+1] = dropout_forward(layer_out, self.dropout_param)
         
+        # Grab the weights for the last layer
         W = self.params["W" + str(self.num_layers)]
         b = self.params["b" + str(self.num_layers)]
         
+        # Take only an affine forward step
         scores, cache[self.num_layers] = affine_forward(layer_out, W, b)
-        
-#         print('Done Forward\n\n')
-        
+         
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
@@ -321,15 +333,10 @@ class FullyConnectedNet(object):
         
         # calculate the softmax loss and gradient
         loss, grad_softmax = softmax_loss(scores, y)
-        
-        
-        
+       
         # Get the W and b of the last layer
         W = "W" + str(self.num_layers)
         b = "b" + str(self.num_layers)
-        
-        
-#         print(f"weight: {W}, bias: {b}")
         
         # Get the grads for the last layer (fully connected without ReLU)
         grad_out, grads[W], grads[b] = affine_backward(grad_softmax, cache[self.num_layers])
@@ -341,31 +348,75 @@ class FullyConnectedNet(object):
         loss += 0.5 * self.reg * ( np.sum(self.params[W]**2))
         
         # Iterate through the rest of the layers, backwards
-        for layer in range(self.num_layers-1, 0, -1):
-            
-#             print(f"layer: {layer}")
-        
+        for layer in range(self.num_layers-1, 0, -1): 
             
             # Get the W and b of this layer
             W = "W" + str(layer)
             b = "b" + str(layer)
             
-#             print(f"weight: {W}, bias: {b}")
+            if self.use_dropout:
+                grad_out = dropout_backward(grad_out, mask[layer])
             
-            # Get the grads for this layer
-            grad_out, grads[W], grads[b] = affine_relu_backward(grad_out, cache[layer])
+            if self.normalization=='batchnorm':
+                
+                # Get the W and b of this layer
+                gamma = "gamma" + str(layer)
+                beta = "beta" + str(layer)
+                
+                # Get the grads for this layer with batchnorm
+                grad_out, grads[W], grads[b], grads[gamma], grads[beta] = affine_bn_relu_backward(grad_out, cache[layer])
+                
+            else:            
+                # Get the grads for this layer
+                grad_out, grads[W], grads[b] = affine_relu_backward(grad_out, cache[layer])
             
             # add the reg loss to the W grad
             grads[W] += self.reg * self.params[W]
         
             # add the regularization loss
             loss += 0.5 * self.reg * ( np.sum(self.params[W]**2))
-      
-        
-#         print(f'Done Backward\n\n')
-        
+          
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
 
         return loss, grads
+
+def affine_bn_relu_forward(x, w, b, gamma, beta, bn_params):
+    """
+    Convenience layer that perorms an affine transform followed by a ReLU
+
+    Inputs:
+    - x: Input to the affine layer
+    - w, b: Weights for the affine layer
+    - gamma, beta: weights for batchnorm layer
+
+    Returns a tuple of:
+    - out: Output from the ReLU
+    - cache: Object to give to the backward pass
+    """
+    a1, fc_cache = affine_forward(x, w, b)
+    
+    a2, bn_cache = batchnorm_forward(a1, gamma, beta, bn_params)
+    
+    out, relu_cache = relu_forward(a2)
+    cache = (fc_cache, bn_cache, relu_cache)
+    return out, cache
+
+def affine_bn_relu_backward(dout, cache):
+    """
+    Backward pass for the affine-relu convenience layer
+    """
+    fc_cache, bn_cache, relu_cache = cache
+    
+    da = relu_backward(dout, relu_cache)
+    
+    dx_norm, dgamma, dbeta = batchnorm_backward(da, bn_cache)
+    
+    dx, dw, db = affine_backward(dx_norm, fc_cache)
+    
+    return dx, dw, db, dgamma, dbeta
+
+
+
+

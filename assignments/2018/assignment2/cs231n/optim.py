@@ -174,7 +174,7 @@ def adam(w, dw, config=None):
     # v is running average of dw**2 - this is for normalization (like RMSprop)
     # decay current v by beta2 add (1-beta2) of dw**2 
     v = config['beta2']*config['v'] + (1-config['beta2'])*(dw**2)
-    
+        
     vt = v / (1-config['beta2']**t)
     
     # next w should move from w by learning_rate in direction of momemtum m
