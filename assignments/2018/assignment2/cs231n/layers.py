@@ -874,7 +874,21 @@ def spatial_batchnorm_forward(x, gamma, beta, bn_param):
     # vanilla version of batch normalization you implemented above.           #
     # Your implementation should be very short; ours is less than five lines. #
     ###########################################################################
-    pass
+    
+    # Get size of each dimension in input
+    N, C, H, W = x.shape
+    
+    # Since we want to normalize across N, H and W, transpose the input
+    # Then reshape it down to (N', C), where N' = N*H*W
+    x_flat = x.transpose(0,2,3,1).reshape(N*H*W, C)
+    
+    # With a 2D input, regular batchnorm can be called
+    out, cache = batchnorm_forward(x_flat, gamma, beta, bn_param)
+    
+    # expand out the first dim back into 3 seperate dims ( N,H,W, C)
+    # Transpose it so that its back in N,C,H,W order
+    out = out.reshape((N,H,W,C)).transpose(0, 3, 1, 2)
+    
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -904,7 +918,21 @@ def spatial_batchnorm_backward(dout, cache):
     # vanilla version of batch normalization you implemented above.           #
     # Your implementation should be very short; ours is less than five lines. #
     ###########################################################################
-    pass
+    
+    # Get size of each dimension in input
+    N, C, H, W = dout.shape
+    
+    # Since we want to normalize across N, H and W, transpose the input
+    # Then reshape it down to (N', C), where N' = N*H*W
+    dout_flat = dout.transpose(0,2,3,1).reshape(N*H*W, C)
+    
+    # With a 2D input, regular batchnorm can be called
+    dx, dgamma, dbeta = batchnorm_backward(dout_flat, cache)
+    
+    # expand out the first dim back into 3 seperate dims ( N,H,W, C)
+    # Transpose it so that its back in N,C,H,W order
+    dx = dx.reshape((N,H,W,C)).transpose(0, 3, 1, 2)
+    
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -940,7 +968,46 @@ def spatial_groupnorm_forward(x, gamma, beta, G, gn_param):
     # the bulk of the code is similar to both train-time batch normalization  #
     # and layer normalization!                                                # 
     ###########################################################################
-    pass
+    
+    # Grab the dimensions of input
+    N,C,H,W = x.shape
+    
+    # Re-arrange and flatten input to be G by C/G*N*H*W
+    x_flat = x.transpose(1,0,2,3).reshape(G, C//G*N*H*W)
+    
+    ## -- Apply Vanilla batch norm --
+    
+    # sum value of each pixel in each image and divide by num pixels for avg
+    # to do this, transpose x to sum in the right direction
+    x_sum = np.sum(x_flat, axis=0)
+    x_mean = x_sum/G
+
+    # find the squared error for each pixel in each image, for all images
+    x_err      = x_flat - x_mean
+    x_sq_err   = x_err**2
+
+    # sum the squared errors for each pixel in each images to find variance
+    x_sq_sum   = np.sum(x_sq_err,axis=0)
+    x_var      = x_sq_sum/G + eps
+
+    # Find standard deviation and the reciprocal of standard deviation
+    x_std      = np.sqrt(x_var)
+    x_inv_std  = 1./x_std
+
+    # subtract mean from each pixel in each image and divide by std dev to all images
+    x_norm     = x_err * x_inv_std
+    
+    ## -- end of vanilla batchnorm --
+    
+    # Reshape and transpose x_norm back to N,C,H,W
+    x_norm = x_norm.reshape((C, N, H, W)).transpose(1,0,2,3)
+    
+    # multiply by the scale parameter and add the shift parameter to each feature
+    out = gamma * x_norm + beta
+
+    # Store all the important stuff in a cache for backward pass
+    cache = (x_sum,x_mean,x_err,x_sq_err,x_sq_sum,x_var,x_std,x_inv_std,out,x_norm,x,gamma,beta, G)
+    
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -966,7 +1033,57 @@ def spatial_groupnorm_backward(dout, cache):
     # TODO: Implement the backward pass for spatial group normalization.      #
     # This will be extremely similar to the layer norm implementation.        #
     ###########################################################################
-    pass
+    
+    # get the shape of dout
+    N, C, H, W = dout.shape
+    
+    # grab all the items from the cache
+    x_sum,x_mean,x_err,x_sq_err,x_sq_sum,x_var,x_std,x_inv_std,out,x_norm,x,gamma,beta,G = cache    
+    
+    # Backprop across scaling
+    dx_norm      = dout         * gamma
+    
+    # Reshape x and dx_norm to match forward pass shape
+    dx_norm = dx_norm.transpose(1,0,2,3).reshape(G, C//G*N*H*W)
+    x = x.transpose(1,0,2,3).reshape(G, C//G*N*H*W)
+    
+    
+    # Backprop multiplication of error and reciprocal of std dev
+    dx_err_2     = dx_norm * x_inv_std
+    dx_inv_std   = np.sum( dx_norm * x_err , axis=0) #sum since std dev per feature is multiplied for every image
+  
+    # Backprop through variance and std dev calculation
+    # x needs to be transposed since its per image normalization, not per feature
+    dx_std       = dx_inv_std   * -1 * x_std**-2
+    dx_var       = dx_std       * 0.5 * x_var**-0.5
+    dx_sq_err    = dx_var       * (1/G) * np.ones(x.shape) #reshape due to summ in forward pass
+    dx_err_1     = dx_sq_err    * 2 * x_err
+    
+    # Sum the two branches of the error
+    dx_err = dx_err_1 + dx_err_2
+    
+    # Backprop through the mean calculations
+    # x needs to be transposed since its per image normalization, not per feature
+    dx_mean      = np.sum(dx_err, axis=0) # sum since mean per feature is subtracted for every image    
+    dx_sum       = (-1./G)*dx_mean*np.ones(x.shape) # Reshape due to summation     
+    
+    # Sum the two branches for x
+    dx = (dx_err + dx_sum)
+    
+    # reshape dx back into what x originally was
+    dx = dx.reshape((C,N,H,W)).transpose(1,0,2,3)
+    
+    # Backprop for gamma and beta
+    print(np.sum(dout*x_norm, axis=(0,2,3)).shape)
+    dgamma = np.sum(dout*x_norm, axis=(0,2,3)) * np.ones_like(gamma)
+    dbeta = np.sum(dout,axis=(0,2,3))
+    
+    
+    
+    
+    
+    
+    
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
